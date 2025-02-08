@@ -3,6 +3,9 @@ import torch.nn as nn
 from torch.nn import functional as F
 import wandb
 import os
+import pandas as pd
+import glob
+import random
 
 # hyperparameters
 batch_size = 64 
@@ -16,6 +19,7 @@ n_embd = 384
 n_head = 6
 n_layer = 6
 dropout = 0.2
+vocab_size = 402 # 0 ~ 401 까지의 Index
 # ------------
 
 # wandb 초기화 (프로젝트 이름과 설정 값을 기록)
@@ -38,34 +42,100 @@ os.makedirs(log_dir, exist_ok=True)
 
 torch.manual_seed(1337)
 
-# wget https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt
-with open('input.txt', 'r', encoding='utf-8') as f:
-    text = f.read()
+def load_return_tokens_from_file(file_path):
+    try:
+        df = pd.read_csv(file_path)
+    except Exception as e:
+        print(f"Error reading {file_path}: {e}")
+        return None
+    
+    if 'ReturnToken' not in df.columns:
+        print(f"File {file_path} does not have 'ReturnToken' column. Skipping.")
+        return None
 
-# here are all the unique characters that occur in this text
-chars = sorted(list(set(text)))
-vocab_size = len(chars)
-# create a mapping from characters to integers
-stoi = { ch:i for i,ch in enumerate(chars) }
-itos = { i:ch for i,ch in enumerate(chars) }
-encode = lambda s: [stoi[c] for c in s] # encoder: take a string, output a list of integers
-decode = lambda l: ''.join([itos[i] for i in l]) # decoder: take a list of integers, output a string
+    tokens = df['ReturnToken'].dropna().tolist()
+    return torch.tensor(tokens, dtype=torch.long)
 
-# Train and test splits
-data = torch.tensor(encode(text), dtype=torch.long)
-n = int(0.9*len(data)) # first 90% will be train, rest val
-train_data = data[:n]
-val_data = data[n:]
+data_dir = "./data"
+csv_files = glob.glob(os.path.join(data_dir, "*_with_returns_tokens.csv"))
 
-# data loading
-def get_batch(split):
-    # generate a small batch of data of inputs x and targets y
-    data = train_data if split == 'train' else val_data
-    ix = torch.randint(len(data) - block_size, (batch_size,))
-    x = torch.stack([data[i:i+block_size] for i in ix])
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-    x, y = x.to(device), y.to(device)
-    return x, y
+train_data_list = []
+for file_path in csv_files:
+    tokens_tensor = load_return_tokens_from_file(file_path)
+    if tokens_tensor is not None and len(tokens_tensor) > block_size:
+        train_data_list.append(tokens_tensor)
+
+train_data_list[:5]
+print(f"총 {len(train_data_list)}개의 파일에서 ReturnToken 시퀀스를 로드했습니다.")
+
+# train_data_list를 무작위로 섞은 후, train/val split (예: 80% train, 20% val)
+train_val_ratio = 0.8
+random.shuffle(train_data_list)
+n_train = int(len(train_data_list) * train_val_ratio)
+train_data = train_data_list[:n_train]
+val_data = train_data_list[n_train:]
+
+print(f"Train 파일 수: {len(train_data)}, Val 파일 수: {len(val_data)}")
+
+def get_batch(split='train'):
+    """
+    각 배치 샘플은 한 파일 내에서 block_size 길이의 입력(x)와 그 바로 다음 토큰(y)로 구성합니다.
+    파일 간의 토큰이 섞이지 않습니다.
+    """
+    if split == 'train':
+        data_list = train_data
+    else:
+        data_list = val_data
+    
+    xs, ys = [], []
+    for _ in range(batch_size):
+        # block_size+1 이상의 길이를 가진 파일 중에서 랜덤 선택
+        valid_files = [d for d in data_list if len(d) > block_size]
+
+        if not valid_files:
+            raise ValueError("block_size보다 긴 ReturnToken 시퀀스가 있는 파일이 없습니다.")
+
+        data = random.choice(valid_files)
+        start_idx = random.randint(0, len(data) - block_size - 1)
+        x = data[start_idx : start_idx + block_size]
+        y = data[start_idx + 1 : start_idx + block_size + 1]
+        xs.append(x)
+        ys.append(y)
+    
+    # 배치 차원으로 스택
+    x_batch = torch.stack(xs)  # (batch_size, block_size)
+    y_batch = torch.stack(ys)  # (batch_size, block_size)
+    return x_batch.to(device), y_batch.to(device)
+
+xb, yb = get_batch('train')
+
+def decode_return(token):
+    """
+    단일 토큰 인덱스(token: 0 ~ 401)를 해당하는 수익률(소수 형태)로 디코딩합니다.
+    
+    변환 규칙:
+      - token == 0   -> -10000 basis points (-100%)
+      - token == 401 -> +10000 basis points (+100%)
+      - token 1 ~ 400: 해당 구간의 대표값(중간값)은
+                       -10000 + (token - 1) * 50 + 25
+                       basis point 단위이며, 이를 10000으로 나누어 소수 형태로 반환합니다.
+    """
+    if token == 0:
+        r_bp = -10000
+    elif token == 401:
+        r_bp = 10000
+    else:
+        r_bp = -10000 + (token - 1) * 50 + 25
+    return r_bp / 100.0 # 다시 % 변환
+
+def decode(token_list):
+    """
+    token_list: 정수 토큰의 리스트 (예: [196, 200, 200, 210, 210])
+    
+    각 토큰을 decode_return 함수를 사용해 디코딩하고,
+    디코딩된 수익률의 리스트(%)를 반환합니다.
+    """
+    return [round(decode_return(token), 1) for token in token_list] # 소수점 반올림
 
 @torch.no_grad()
 def estimate_loss():
@@ -242,7 +312,7 @@ for step in range(max_iters):
             }
             torch.save(checkpoint, checkpoint_path)
             print(f"Checkpoint saved at step {step} to {checkpoint_path}")
-            wandb.save(checkpoint_path)  # wandb 서버에도 체크포인트 파일 저장
+            # wandb.save(checkpoint_path)  # wandb 서버에도 체크포인트 파일 저장
 
     # sample a batch of data
     xb, yb = get_batch('train')
@@ -255,4 +325,6 @@ for step in range(max_iters):
 
 # generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
+result = decode(m.generate(context, max_new_tokens=256)[0].tolist()) # 256개 생성
+print('output 토큰 길이: ', len(result), '\n', result)
+wandb.finish()
