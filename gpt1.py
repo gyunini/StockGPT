@@ -82,6 +82,28 @@ class Head(nn.Module):
         v = self.value(x) # (B,T,C)
         out = wei @ v # (B, T, T) @ (B, T, C) -> (B, T, C)
         return out
+    
+class MultiHeadAttention(nn.Module):
+    """ multiple heads of self-attention in parallel """
+
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+
+    def forward(self, x):
+        return torch.cat([h(x) for h in self.heads], dim=-1) # 마지막 차원으로 concat: (B, T, head_size * num_head) (원복됨)
+
+class FeedFoward(nn.Module):
+    """ a simple linear layer followed by a non-linearity """
+    
+    def __init__(self, n_embd):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_embd, n_embd),
+            nn.ReLU(),
+        )
+    def forward(self, x):
+        return self.net(x)
 
 # super simple bigram model
 class BigramLanguageModel(nn.Module):
@@ -91,7 +113,8 @@ class BigramLanguageModel(nn.Module):
         # 각 토큰 위치에 해당하는 곳의 row를 lookup하는 table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.self_attention_head = Head(n_embd)
+        self.self_attention_heads = MultiHeadAttention(4, n_embd // 4) # head 4개로 구성된 multihead attention
+        self.feed_forward = FeedFoward(n_embd)
 
         # 다시 vocab_size 만큼의 선형 변환을 통해 logit을 구하기 위함
         self.lm_head = nn.Linear(n_embd, vocab_size)
@@ -99,11 +122,12 @@ class BigramLanguageModel(nn.Module):
     def forward(self, idx, targets=None):
         B, T = idx.shape
 
-        # idx and targets are both (B,T) tensor of integers
+        # idx ,targets : (B,T) tensor of integers
         tok_emb = self.token_embedding_table(idx) # (B,T,C)
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # 0 ~ T-1 텐서 생성 (T, C)
         x = tok_emb + pos_emb # broadcasting 일어남: (B, T, C)
-        x = self.self_attention_head(x) # (B, T, C)
+        x = self.self_attention_heads(x) # (B, T, C)
+        x = self.feed_forward(x) # (B, T, C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
         if targets is None:
