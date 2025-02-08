@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import wandb
+import os
 
 # hyperparameters
 batch_size = 64 
@@ -9,12 +11,30 @@ max_iters = 5000
 eval_interval = 500
 learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
+eval_iters = 200 # validation 200개만 평가
 n_embd = 384
 n_head = 6
 n_layer = 6
 dropout = 0.2
 # ------------
+
+# wandb 초기화 (프로젝트 이름과 설정 값을 기록)
+wandb.init(project="stockGPT", entity="gyunini", config={
+    "batch_size": batch_size,
+    "block_size": block_size,
+    "max_iters": max_iters,
+    "eval_interval": eval_interval,
+    "learning_rate": learning_rate,
+    "eval_iters": eval_iters,
+    "n_embd": n_embd,
+    "n_head": n_head,
+    "n_layer": n_layer,
+    "dropout": dropout,
+})
+
+# 로그와 체크포인트를 저장할 디렉토리 생성
+log_dir = 'logs'
+os.makedirs(log_dir, exist_ok=True)
 
 torch.manual_seed(1337)
 
@@ -198,12 +218,31 @@ print('Total Model Parameters:', round(sum(p.numel() for p in m.parameters())/1e
 # create a PyTorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
-for iter in range(max_iters):
-
+for step in range(max_iters):
     # every once in a while evaluate the loss on train and val sets
-    if iter % eval_interval == 0 or iter == max_iters - 1:
+    if step % eval_interval == 0 or step == max_iters - 1:
         losses = estimate_loss()
-        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        print(f"step {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
+        # wandb에 손실 기록
+        wandb.log({
+            "step": step,
+            "train_loss": losses['train'],
+            "val_loss": losses['val']
+        })
+
+        # 500 step 혹은 마지막 step 체크포인트 저장
+        if step > 0 and (step % 1000 == 0 or step == max_iters - 1):
+            checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
+            checkpoint = {
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'step': step,
+                'val_loss': losses['val']
+            }
+            torch.save(checkpoint, checkpoint_path)
+            print(f"Checkpoint saved at step {step} to {checkpoint_path}")
+            wandb.save(checkpoint_path)  # wandb 서버에도 체크포인트 파일 저장
 
     # sample a batch of data
     xb, yb = get_batch('train')
