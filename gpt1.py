@@ -79,8 +79,8 @@ print(f"Train 파일 수: {len(train_data)}, Val 파일 수: {len(val_data)}")
 
 def get_batch(split='train'):
     """
-    각 배치 샘플은 한 파일 내에서 block_size 길이의 입력(x)와 그 바로 다음 토큰(y)로 구성합니다.
-    파일 간의 토큰이 섞이지 않습니다.
+    각 배치 샘플은 한 파일 내에서 block_size 길이의 입력(x)와 그 바로 다음 토큰(y)로 구성
+    파일 간의 토큰이 섞이지 않음
     """
     if split == 'train':
         data_list = train_data
@@ -111,14 +111,14 @@ xb, yb = get_batch('train')
 
 def decode_return(token):
     """
-    단일 토큰 인덱스(token: 0 ~ 401)를 해당하는 수익률(소수 형태)로 디코딩합니다.
+    단일 토큰 인덱스(token: 0 ~ 401)를 해당하는 수익률(소수 형태)로 디코딩(복원)
     
     변환 규칙:
       - token == 0   -> -10000 basis points (-100%)
       - token == 401 -> +10000 basis points (+100%)
       - token 1 ~ 400: 해당 구간의 대표값(중간값)은
                        -10000 + (token - 1) * 50 + 25
-                       basis point 단위이며, 이를 10000으로 나누어 소수 형태로 반환합니다.
+                       basis point 단위이며, 이를 10000으로 나누어 소수 형태로 반환
     """
     if token == 0:
         r_bp = -10000
@@ -133,7 +133,7 @@ def decode(token_list):
     token_list: 정수 토큰의 리스트 (예: [196, 200, 200, 210, 210])
     
     각 토큰을 decode_return 함수를 사용해 디코딩하고,
-    디코딩된 수익률의 리스트(%)를 반환합니다.
+    디코딩된 수익률의 리스트(%)를 반환.
     """
     return [round(decode_return(token), 1) for token in token_list] # 소수점 반올림
 
