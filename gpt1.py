@@ -7,10 +7,13 @@ batch_size = 64
 block_size = 256 # maximum context length for predictions
 max_iters = 5000
 eval_interval = 500
-learning_rate = 1e-3
+learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
-n_embd = 128
+n_embd = 384
+n_head = 6
+n_layer = 6
+dropout = 0.2
 # ------------
 
 torch.manual_seed(1337)
@@ -67,10 +70,11 @@ class Head(nn.Module):
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # 학습과 상관없는 parameter 
+        self.dropout = nn.Dropout(dropout) # 0.2
 
     def forward(self, x):
         B,T,C = x.shape
-        k = self.key(x)   # (B,T,hshead_size)
+        k = self.key(x)   # (B,T,head_size)
         q = self.query(x) # (B,T,head_size)
         # compute attention scores 계산 ("affinities")
         wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, head_size) @ (B, head_size, T) -> (B, T, T)
@@ -78,6 +82,7 @@ class Head(nn.Module):
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
         # attention coefficients 계산
         wei = F.softmax(wei, dim=-1) # (B, T, T) 
+        wei = self.dropout(wei)
         # value와의 weighted sum 계산
         v = self.value(x) # (B,T,head_size)
         out = wei @ v # (B, T, T) @ (B, T, head_size) -> (B, T, head_size)
@@ -90,10 +95,11 @@ class MultiHeadAttention(nn.Module):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
         self.proj_layer = nn.Linear(head_size * num_heads, n_embd)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
         out = torch.cat([h(x) for h in self.heads], dim=-1) # 마지막 차원으로 concat: (B, T, head_size * num_head) (원복됨)
-        out = self.proj_layer(out)
+        out = self.dropout(self.proj_layer(out))
         return out
 
 class FeedFoward(nn.Module):
@@ -105,6 +111,7 @@ class FeedFoward(nn.Module):
             nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
             nn.Linear(4 * n_embd, n_embd),
+            nn.Dropout(dropout),
         )
     def forward(self, x):
         return self.net(x)
@@ -133,15 +140,19 @@ class GPT1(nn.Module):
         # 각 토큰 위치에 해당하는 곳의 row를 lookup하는 table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(
-            Block(n_embd, n_head=4), # head 개수 4개
-            Block(n_embd, n_head=4),
-            Block(n_embd, n_head=4),
-            nn.LayerNorm(n_embd)
-        )
-
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+        self.layer_norm_final = nn.LayerNorm(n_embd) # final layer norm
         # 다시 vocab_size 만큼의 선형 변환을 통해 logit을 구하기 위함
         self.lm_head = nn.Linear(n_embd, vocab_size)
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
@@ -151,6 +162,7 @@ class GPT1(nn.Module):
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # 0 ~ T-1 텐서 생성 (T, C)
         x = tok_emb + pos_emb # broadcasting 일어남: (B, T, C)
         x = self.blocks(x) # (B, T, C)
+        x = self.layer_norm_final(x) # (B, T, C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
         if targets is None:
@@ -181,6 +193,7 @@ class GPT1(nn.Module):
 
 model = GPT1()
 m = model.to(device)
+print('Total Model Parameters:', round(sum(p.numel() for p in m.parameters())/1e6, 1), 'M')
 
 # create a PyTorch optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
