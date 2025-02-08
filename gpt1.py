@@ -70,17 +70,17 @@ class Head(nn.Module):
 
     def forward(self, x):
         B,T,C = x.shape
-        k = self.key(x)   # (B,T,C)
-        q = self.query(x) # (B,T,C)
+        k = self.key(x)   # (B,T,hshead_size)
+        q = self.query(x) # (B,T,head_size)
         # compute attention scores 계산 ("affinities")
-        wei = q @ k.transpose(-2,-1) * C**-0.5 # (B, T, C) @ (B, C, T) -> (B, T, T)
+        wei = q @ k.transpose(-2,-1) * k.shape[-1]**-0.5 # (B, T, head_size) @ (B, head_size, T) -> (B, T, T)
         # masking 처리 (autoregressive decoding)
         wei = wei.masked_fill(self.tril[:T, :T] == 0, float('-inf')) # (B, T, T)
         # attention coefficients 계산
         wei = F.softmax(wei, dim=-1) # (B, T, T) 
         # value와의 weighted sum 계산
-        v = self.value(x) # (B,T,C)
-        out = wei @ v # (B, T, T) @ (B, T, C) -> (B, T, C)
+        v = self.value(x) # (B,T,head_size)
+        out = wei @ v # (B, T, T) @ (B, T, head_size) -> (B, T, head_size)
         return out
     
 class MultiHeadAttention(nn.Module):
@@ -89,9 +89,12 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([Head(head_size) for _ in range(num_heads)])
+        self.proj_layer = nn.Linear(head_size * num_heads, n_embd)
 
     def forward(self, x):
-        return torch.cat([h(x) for h in self.heads], dim=-1) # 마지막 차원으로 concat: (B, T, head_size * num_head) (원복됨)
+        out = torch.cat([h(x) for h in self.heads], dim=-1) # 마지막 차원으로 concat: (B, T, head_size * num_head) (원복됨)
+        out = self.proj_layer(out)
+        return out
 
 class FeedFoward(nn.Module):
     """ a simple linear layer followed by a non-linearity """
@@ -99,22 +102,43 @@ class FeedFoward(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(n_embd, n_embd),
+            nn.Linear(n_embd, 4 * n_embd),
             nn.ReLU(),
+            nn.Linear(4 * n_embd, n_embd),
         )
     def forward(self, x):
         return self.net(x)
 
+class Block(nn.Module):
+    """ Transformer block: multihead attention + feed forward로 구성된 Block 정의 """
+
+    def __init__(self, n_embd, n_head):
+        super().__init__()
+        head_size = n_embd // n_head
+        self.sa = MultiHeadAttention(n_head, head_size) # head 개수만큼 나눠줌, 추후 각 head에서 attention value가 합쳐져서 원복
+        self.ffwd = FeedFoward(n_embd)
+        self.layer_norm1 = nn.LayerNorm(n_embd)
+        self.layer_norm2 = nn.LayerNorm(n_embd)
+
+    def forward(self, x):
+        x = x + self.sa(self.layer_norm1(x)) # Pre-Norm Formulation: 최근에는 앞에 layer norm 적용함
+        x = x + self.ffwd(self.layer_norm2(x))
+        return x
+
 # super simple bigram model
-class BigramLanguageModel(nn.Module):
+class GPT1(nn.Module):
 
     def __init__(self):
         super().__init__()
         # 각 토큰 위치에 해당하는 곳의 row를 lookup하는 table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.self_attention_heads = MultiHeadAttention(4, n_embd // 4) # head 4개로 구성된 multihead attention
-        self.feed_forward = FeedFoward(n_embd)
+        self.blocks = nn.Sequential(
+            Block(n_embd, n_head=4), # head 개수 4개
+            Block(n_embd, n_head=4),
+            Block(n_embd, n_head=4),
+            nn.LayerNorm(n_embd)
+        )
 
         # 다시 vocab_size 만큼의 선형 변환을 통해 logit을 구하기 위함
         self.lm_head = nn.Linear(n_embd, vocab_size)
@@ -126,8 +150,7 @@ class BigramLanguageModel(nn.Module):
         tok_emb = self.token_embedding_table(idx) # (B,T,C)
         pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # 0 ~ T-1 텐서 생성 (T, C)
         x = tok_emb + pos_emb # broadcasting 일어남: (B, T, C)
-        x = self.self_attention_heads(x) # (B, T, C)
-        x = self.feed_forward(x) # (B, T, C)
+        x = self.blocks(x) # (B, T, C)
         logits = self.lm_head(x) # (B, T, vocab_size)
 
         if targets is None:
@@ -156,7 +179,7 @@ class BigramLanguageModel(nn.Module):
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
 
-model = BigramLanguageModel()
+model = GPT1()
 m = model.to(device)
 
 # create a PyTorch optimizer
@@ -165,7 +188,7 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 for iter in range(max_iters):
 
     # every once in a while evaluate the loss on train and val sets
-    if iter % eval_interval == 0:
+    if iter % eval_interval == 0 or iter == max_iters - 1:
         losses = estimate_loss()
         print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
