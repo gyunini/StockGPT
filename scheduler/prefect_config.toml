@@ -1,0 +1,13 @@
+[logging]
+level = "INFO"
+log_to_file = true
+log_directory = "logs"
+log_file = "prefect.log"
+
+[orion]
+database_connection_url = "sqlite:///scheduler/prefect.db"
+
+[server]
+host = "127.0.0.1"
+port = 4200
+

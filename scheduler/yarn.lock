@@ -1,0 +1,6 @@
+version: 1
+work_pools:
+  - name: default
+    type: process
+    concurrency_limit: 5
+
