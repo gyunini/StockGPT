@@ -23,8 +23,6 @@ venv/
 Thumbs.db
 
 # Ignore all files inside the stooq folder
-stooq/
-data/
 logs/
 wandb/
 input.txt
