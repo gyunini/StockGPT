@@ -8,6 +8,7 @@ dependencies = [
     "bs4>=0.0.2",
     "numpy>=2.0.2",
     "pandas>=2.2.3",
+    "parmap>=1.7.0",
     "seaborn>=0.13.2",
     "torch>=2.6.0",
     "tqdm>=4.67.1",
