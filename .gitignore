@@ -22,7 +22,10 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Ignore all files inside the stooq folder
-logs/
-wandb/
-input.txt
+# Ignore all files relate to model logging
+src/stockgpt/logs/
+src/stockgpt/wandb/
+src/stockgpt/input.txt
+
+# Ignore training data
+data/model
