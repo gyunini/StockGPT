@@ -14,6 +14,7 @@ import parmap
 import re
 import requests
 import tqdm
+import os
 
 
 def parse_csv(file_path):
@@ -78,8 +79,20 @@ def load_universe():
 
 
 def load_stooq(logger: logging.Logger):
-    loaded_tickers = [pth.split('/')[-1].split('.')[0] for pth in glob.glob('/Users/sjkdan/desk/StockGPT/data/stooq/*/*.csv')]
-    stooq_tickers = [ticker.split('.')[0] for ticker in open('data/stooq/universe/universe.txt').readlines()]
+    # loaded_tickers = [pth.split('/')[-1].split('.')[0] for pth in glob.glob('/Users/sjkdan/desk/StockGPT/data/stooq/*/*.csv')]
+    # stooq_tickers = [ticker.split('.')[0] for ticker in open('data/stooq/universe/universe.txt').readlines()]
+
+    # 현재 스크립트 위치 기준으로 두 단계 위의 data/stooq 경로 찾기
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "stooq"))
+    
+    # data/stooq/*/*.csv 파일 로드
+    loaded_tickers = [os.path.basename(pth).split('.')[0] for pth in glob.glob(os.path.join(base_dir, "*", "*.csv"))]
+
+    # universe.txt 파일 읽기
+    universe_file = os.path.join(base_dir, "universe", "universe.txt")
+    stooq_tickers = [ticker.strip().split('.')[0] for ticker in open(universe_file).readlines()]
+
+    
     tickers = [ticker for ticker in stooq_tickers if ticker not in loaded_tickers]
 
     download_url = "https://stooq.com/q/d/l/?s={stooq_ticker}&i=d"
