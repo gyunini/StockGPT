@@ -4,8 +4,10 @@ from torch.nn import functional as F
 import wandb
 import os
 import pandas as pd
+import numpy as np
 import glob
 import random
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 # hyperparameters
 batch_size = 64 
@@ -169,6 +171,13 @@ def estimate_loss():
     model.train()
     return out
 
+# 평가 지표 계산 함수들
+def compute_rmse(preds, targets):
+    return np.sqrt(mean_squared_error(targets, preds))
+
+def compute_mae(preds, targets):
+    return mean_absolute_error(targets, preds)
+
 class Head(nn.Module):
     """ one head of self-attention """
 
@@ -312,12 +321,45 @@ for step in range(max_iters):
         losses = estimate_loss()
         print(f"step {step}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
 
-        # wandb에 손실 기록
+        # -------------------------------
+        # 추가: validation 배치에서 GPT 모델의 예측 토큰을 수익률(%)로 디코딩 후 RMSE, MAE 계산
+        x_val, y_val = get_batch('val')  # x_val, y_val: (batch_size, block_size)
+        with torch.no_grad():
+            # 모델 예측 (logits shape: [batch_size, block_size, vocab_size])
+            val_logits, _ = model(x_val)
+            # 각 위치별 가장 높은 확률의 토큰 번호 선택 (shape: [batch_size, block_size])
+            pred_tokens = torch.argmax(val_logits, dim=-1)
+        
+        pred_returns = []  # GPT 모델의 예측 수익률(%)
+        true_returns = []  # 실제 수익률(%)
+
+        # 배치 내 모든 시퀀스에 대해 디코딩 수행
+        for i in range(pred_tokens.shape[0]):
+            # tensor를 리스트로 변환
+            pred_token_list = pred_tokens[i].tolist()
+            true_token_list = y_val[i].tolist()
+
+            # decode 함수를 통해 토큰 리스트를 수익률(%) 리스트로 변환
+            pred_returns.extend(decode(pred_token_list))
+            true_returns.extend(decode(true_token_list))
+        
+        # numpy array로 변환하여 평가 지표 계산
+        pred_returns = np.array(pred_returns)
+        true_returns = np.array(true_returns)
+        rmse = compute_rmse(pred_returns, true_returns)
+        mae = compute_mae(pred_returns, true_returns)
+        
+        print(f"Validation RMSE: {rmse:.5f}, MAE: {mae:.5f}")
+
+        # wandb에 평가 지표 기록
         wandb.log({
             "step": step,
             "train_loss": losses['train'],
-            "val_loss": losses['val']
+            "val_loss": losses['val'],
+            "val_rmse": rmse,
+            "val_mae": mae
         })
+        # -------------------------------
 
         # 500 step 혹은 마지막 step 체크포인트 저장
         if step > 0 and (step % 1000 == 0 or step == max_iters - 1):
