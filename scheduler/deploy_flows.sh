@@ -7,7 +7,7 @@ PROJECT_ROOT=$(pwd)
 echo "Project root: $PROJECT_ROOT"
 
 # Set Prefect API URL for local server
-export PREFECT_API_URL="http://127.0.0.1:4201/api"
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
 
 # Ensure Prefect connection is valid
 uv run prefect config view

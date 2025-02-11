@@ -7,10 +7,10 @@ set -e
 pip install --user pipx
 pipx install uv
 uv -V
-uv venv pytorch
+uv venv stockgpt-env
 
 echo "가상환경 활성화"
-source pytorch/bin/activate
+source stockgpt-env/bin/activate
 
 echo "pyproject.toml의 패키지 설치"
 uv pip install --requirements pyproject.toml

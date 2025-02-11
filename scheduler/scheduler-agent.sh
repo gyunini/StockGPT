@@ -11,7 +11,7 @@ PREFECT_PROFILE="stockgpt"
 
 # Set Prefect API URL for local server
 # These should also be set in the profile
-export PREFECT_API_URL="http://127.0.0.1:4201/api"
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
 
 # Ensure logs directory exists
 mkdir -p logs
@@ -40,7 +40,7 @@ WORK_POOL_NAME="default-agent-pool"
 ### **🔹 Step 2: Start Prefect Server if Not Running**
 if [[ $(is_prefect_server_running) -ne 200 ]]; then
     echo "🚀 Starting Prefect server..."
-    uv run prefect server start --host 127.0.0.1 --port 4201 > logs/prefect_server.log 2>&1 &
+    uv run prefect server start --host 127.0.0.1 --port 4200 > logs/prefect_server.log 2>&1 &
     
     # Wait for Prefect server to start
     echo "⏳ Waiting for Prefect server to be ready..."

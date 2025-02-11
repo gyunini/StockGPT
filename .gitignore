@@ -29,3 +29,8 @@ src/stockgpt/input.txt
 
 # Ignore training data
 data/model
+
+# Ignore some setting files (uv, prefect ... etc)
+uv.*
+.prefectignore
+prefect.yaml
